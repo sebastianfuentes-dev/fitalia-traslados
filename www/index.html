@@ -79,8 +79,21 @@ let usuario=null, perfil=null, ruta=null, tras=[], sel=new Set(), disp=[];
 function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600);}
 function esc(s){return (s??'').toString().replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));}
 function hora(ts){if(!ts)return '—';return new Date(ts).toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'});}
-function gps(){return new Promise(r=>{if(!navigator.geolocation)return r({lat:null,lon:null});
-  navigator.geolocation.getCurrentPosition(p=>r({lat:+p.coords.latitude.toFixed(6),lon:+p.coords.longitude.toFixed(6)}),()=>r({lat:null,lon:null}),{enableHighAccuracy:true,timeout:9000,maximumAge:0});});}
+// Toma varias lecturas por ~7 s y se queda con la MÁS precisa (menor accuracy en metros).
+// Corta antes si logra un fix fino (<=15 m). Mucho mejor que una sola lectura.
+function gps(){return new Promise(res=>{
+  if(!navigator.geolocation) return res({lat:null,lon:null});
+  let best=null, id=null, done=false;
+  const finish=()=>{ if(done) return; done=true; try{ if(id!=null) navigator.geolocation.clearWatch(id); }catch(_){}
+    res(best?{lat:+best.coords.latitude.toFixed(6),lon:+best.coords.longitude.toFixed(6),precision:Math.round(best.coords.accuracy||0)}:{lat:null,lon:null,precision:null}); };
+  try{
+    id=navigator.geolocation.watchPosition(p=>{
+      if(!best || (p.coords.accuracy||9999) < (best.coords.accuracy||9999)) best=p;
+      if(p.coords.accuracy && p.coords.accuracy<=15) finish();
+    }, ()=>{ if(!best) finish(); }, {enableHighAccuracy:true, timeout:12000, maximumAge:0});
+  }catch(_){ finish(); }
+  setTimeout(finish, 7000);
+});}
 async function subirFoto(file,prefijo){
   const path=(ruta?.id||'tmp')+'/'+prefijo+'_'+Date.now()+'.jpg';
   const {error}=await sb.storage.from('fotos-traslados').upload(path,file,{contentType:file.type||'image/jpeg',upsert:true});
