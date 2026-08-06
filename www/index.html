@@ -150,13 +150,10 @@ function scHome(){
   app().innerHTML=`<h2>Hola, ${esc((perfil?.nombre||'').split(' ')[0]||'chofer')} 👋</h2><p class="sub">¿Qué quieres hacer?</p>
     ${ruta?`<button class="btn brand big" onclick="go('tareas')"><span class="ic">🚚</span><span><span class="tt">Continuar ruta en curso</span><br><span class="ss">Retoma tu ruta activa</span></span></button>`:''}
     <button class="btn ghost big" onclick="go('${ruta?'tareas':'home'}')" ${ruta?'':'disabled'}><span class="ic">📋</span><span><span class="tt">Tareas pendientes${ruta?` (${pend})`:''}</span><br><span class="ss">${ruta?'Entregas por hacer en ruta':'Sin ruta activa'}</span></span></button>
-    <button class="btn ${ruta?'ghost':'brand'} big" onclick="nuevaTarea()"><span class="ic">➕</span><span><span class="tt">Nueva tarea</span><br><span class="ss">Elegir GTI e iniciar una ruta</span></span></button>
+    <button class="btn ${ruta?'ghost':'brand'} big" onclick="nuevaTarea()"><span class="ic">➕</span><span><span class="tt">${ruta?'Tomar más GTI':'Nueva tarea'}</span><br><span class="ss">${ruta?'Sumar GTI a tu ruta actual':'Elegir GTI e iniciar una ruta'}</span></span></button>
     <button class="btn ghost" style="margin-top:10px" onclick="salir()">Cerrar sesión</button>`;
 }
-function nuevaTarea(){
-  if(ruta){ toast('Termina o cancela tu ruta en curso antes de iniciar otra'); go('tareas'); return; }
-  go('select');
-}
+function nuevaTarea(){ go('select'); }
 async function salir(){ await sb.auth.signOut(); location.reload(); }
 
 /* ===== SELECCIÓN MÚLTIPLE ===== */
@@ -185,16 +182,31 @@ function scResumen(){
   const elegidas=disp.filter(d=>sel.has(d.gti));
   const g={}; elegidas.forEach(d=>{(g[d.sucursal]=g[d.sucursal]||[]).push(d);});
   const sucs=Object.keys(g);
-  app().innerHTML=`<h2>Tu ruta de hoy</h2><p class="sub">Visitarás <b>${sucs.length} sucursal(es)</b> con ${elegidas.length} GTI.</p>
+  const agregar=!!ruta; // ya hay ruta en curso -> se SUMAN a ella
+  app().innerHTML=`<h2>${agregar?'Agregar GTI a la ruta':'Tu ruta de hoy'}</h2>
+    <p class="sub">${agregar?`Se sumarán ${elegidas.length} GTI a tu ruta en curso.`:`Visitarás <b>${sucs.length} sucursal(es)</b> con ${elegidas.length} GTI.`}</p>
     ${sucs.map(s=>`<div class="suchead"><span class="sucdot" style="background:${SUC_COLOR[s]||'#64748B'}"></span><span class="sucname">${esc(s)}</span><span class="tag pend">${g[s].length} GTI</span></div>
       ${g[s].map(d=>`<div class="card"><div class="gnum">GTI ${esc(d.gti)}</div><div class="gmeta">${d.bultos?`<span class="pill">${d.bultos} bultos</span>`:''}</div></div>`).join('')}`).join('')}
-    <h2 style="margin-top:16px;font-size:15px">Foto de referencia de la carga <span style="color:var(--bad)">*</span></h2>
+    ${agregar?'':`<h2 style="margin-top:16px;font-size:15px">Foto de referencia de la carga <span style="color:var(--bad)">*</span></h2>
     <p class="sub" style="margin-bottom:8px">Obligatoria. Una foto del total de la mercadería que subes (solo referencia).</p>
     <label class="foto ${fotoRefFile?'ok':''}" id="fref" for="fileref">${fotoRefFile?'✓ Foto de referencia lista':'📷 Tomar foto de referencia'}</label>
-    <input id="fileref" type="file" accept="image/*" capture="environment" class="hidden"/>
-    <button class="btn ok" id="iniciar" onclick="iniciarRuta()">📍 Registrar salida e iniciar ruta</button>
+    <input id="fileref" type="file" accept="image/*" capture="environment" class="hidden"/>`}
+    <button class="btn ok" id="iniciar" onclick="${agregar?'agregarGtis()':'iniciarRuta()'}">${agregar?'➕ Agregar a la ruta':'📍 Registrar salida e iniciar ruta'}</button>
     <button class="btn ghost" onclick="go('select')">Volver a la selección</button>`;
-  $('#fileref').onchange=(e)=>{fotoRefFile=e.target.files[0]||null;if(fotoRefFile){const u=URL.createObjectURL(fotoRefFile);const f=$('#fref');f.classList.add('ok');f.innerHTML='✓ Foto lista<br><img src="'+u+'">';}};
+  const fr=$('#fileref');
+  if(fr) fr.onchange=(e)=>{fotoRefFile=e.target.files[0]||null;if(fotoRefFile){const u=URL.createObjectURL(fotoRefFile);const f=$('#fref');f.classList.add('ok');f.innerHTML='✓ Foto lista<br><img src="'+u+'">';}};
+}
+async function agregarGtis(){
+  const b=$('#iniciar'); b.disabled=true; b.innerHTML='<span class="spin"></span>Agregando…';
+  try{
+    const elegidas=disp.filter(d=>sel.has(d.gti)).filter(d=>!tras.some(t=>t.gti===d.gti));
+    if(!elegidas.length){ toast('Esas GTI ya están en tu ruta'); go('tareas'); return; }
+    const filas=elegidas.map(d=>({ruta_id:ruta.id,gti:d.gti,sucursal:d.sucursal,nvi:d.nvi||null,bultos:d.bultos||null,estado:'en_ruta'}));
+    const {error}=await sb.from('traslados').insert(filas); if(error) throw error;
+    for(const d of elegidas){ try{ await sb.from('gti_disponibles').update({tomada:true}).eq('gti',d.gti); }catch(_){} }
+    sel=new Set(); await cargarTraslados();
+    toast(elegidas.length+' GTI agregada(s) a la ruta'); go('tareas');
+  }catch(e){ toast('Error: '+e.message); b.disabled=false; b.textContent='➕ Agregar a la ruta'; }
 }
 async function iniciarRuta(){
   if(!fotoRefFile){ toast('La foto de referencia es obligatoria'); return; }
@@ -240,7 +252,8 @@ function scTareas(){
         <div class="gmeta" style="margin-bottom:${done?'0':'10px'}">${g[s].map(t=>`<span class="pill">GTI ${esc(t.gti)}</span>`).join('')}</div>
         ${done?'':`<button class="btn ok" style="margin:0" onclick="go('entrega:${encodeURIComponent(s)}')">📦 Entregar en ${esc(s)}</button>`}
       </div>`;}).join('')}
-    <button class="btn ghost" style="margin-top:6px" onclick="cancelarRuta()">Cancelar ruta</button>`;
+    <button class="btn brand" style="margin-top:8px" onclick="go('select')">➕ Agregar más GTI a la ruta</button>
+    <button class="btn ghost" onclick="cancelarRuta()">Cancelar ruta</button>`;
 }
 async function cancelarRuta(){
   if(!confirm('¿Cancelar esta ruta? Se cerrará sin completar las entregas pendientes.')) return;
