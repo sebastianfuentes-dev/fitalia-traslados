@@ -1,0 +1,21 @@
+workflows:
+  fitalia-apk:
+    name: Fitalia Traslados APK
+    max_build_duration: 60
+    environment:
+      node: 20
+      java: 17
+    scripts:
+      - name: Instalar dependencias
+        script: npm install
+      - name: Agregar plataforma Android
+        script: npx cap add android || echo "android ya existe"
+      - name: Sincronizar
+        script: npx cap sync android
+      - name: Compilar APK debug
+        script: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+    artifacts:
+      - android/app/build/outputs/apk/**/*.apk
