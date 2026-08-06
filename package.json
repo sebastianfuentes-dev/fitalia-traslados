@@ -2,12 +2,10 @@
   "name": "fitalia-traslados",
   "version": "1.0.0",
   "private": true,
-  "description": "App de traslados de choferes - Fitalia Repuestos",
-  "devDependencies": {
-    "@capacitor/cli": "^6.1.2"
-  },
+  "devDependencies": { "@capacitor/cli": "^6.1.2" },
   "dependencies": {
     "@capacitor/core": "^6.1.2",
-    "@capacitor/android": "^6.1.2"
+    "@capacitor/android": "^6.1.2",
+    "@capacitor/geolocation": "^6.1.0"
   }
 }
