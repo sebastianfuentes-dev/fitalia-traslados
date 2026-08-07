@@ -171,16 +171,18 @@ async function cargarTraslados(){
   const {data}=await sb.from('traslados').select('*').eq('ruta_id',ruta.id).order('creado_en');
   tras=data||[];
 }
+const DOMINIO_USUARIO='traslados.fitalia.cl';
+function aCorreo(login){ const s=(login||'').trim(); return s.includes('@')?s.toLowerCase():(s.toLowerCase()+'@'+DOMINIO_USUARIO); }
 function renderLogin(){
   $('#who').innerHTML=''; $('#nav').classList.add('hidden');
   app().innerHTML=`<div class="center"><h2>Iniciar sesión</h2><p class="sub">Ingresa con el usuario de la empresa.</p>
-    <div class="card"><label>Usuario (correo)</label><input id="email" type="email" placeholder="roberto@fitalia.cl"/>
+    <div class="card"><label>Usuario</label><input id="email" type="text" autocapitalize="none" placeholder="usuario"/>
     <label>Contraseña</label><input id="pass" type="password" placeholder="••••••"/>
     <div id="lerr" class="banner err hidden"></div><button class="btn brand" id="entrar">Entrar</button></div></div>`;
   $('#entrar').onclick=login; $('#pass').addEventListener('keydown',e=>{if(e.key==='Enter')login();});
 }
 async function login(){
-  const email=$('#email').value.trim(), password=$('#pass').value, b=$('#entrar');
+  const email=aCorreo($('#email').value), password=$('#pass').value, b=$('#entrar');
   b.disabled=true; b.innerHTML='<span class="spin"></span>Entrando…';
   const {data,error}=await sb.auth.signInWithPassword({email,password});
   if(error){const e=$('#lerr');e.textContent='Usuario o contraseña incorrectos.';e.classList.remove('hidden');b.disabled=false;b.textContent='Entrar';return;}
