@@ -12,6 +12,8 @@ workflows:
         script: npx cap add android || echo "android ya existe"
       - name: Sincronizar
         script: npx cap sync android
+      - name: Permiso de ubicacion
+        script: grep -q ACCESS_FINE_LOCATION android/app/src/main/AndroidManifest.xml || sed -i.bak 's|</manifest>|<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/><uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/></manifest>|' android/app/src/main/AndroidManifest.xml
       - name: Compilar APK debug
         script: |
           cd android
