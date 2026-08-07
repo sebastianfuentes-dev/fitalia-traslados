@@ -12,8 +12,10 @@ workflows:
         script: npx cap add android || echo "android ya existe"
       - name: Sincronizar
         script: npx cap sync android
-      - name: Permisos de ubicacion y segundo plano
-        script: grep -q ACCESS_BACKGROUND_LOCATION android/app/src/main/AndroidManifest.xml || sed -i.bak 's|</manifest>|<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/><uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/><uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/><uses-permission android:name="android.permission.POST_NOTIFICATIONS"/><uses-permission android:name="android.permission.FOREGROUND_SERVICE"/><uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/></manifest>|' android/app/src/main/AndroidManifest.xml
+      - name: Generar icono de la app (F + camion)
+        script: |
+          npm i -D @capacitor/assets
+          npx capacitor-assets generate --android --iconBackgroundColor '#005BB9' --iconBackgroundColorDark '#003D8F'
       - name: Compilar APK debug
         script: |
           cd android
