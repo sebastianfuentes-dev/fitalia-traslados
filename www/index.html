@@ -112,8 +112,41 @@ async function subirFoto(file,prefijo){
 function grupos(){const g={};tras.forEach(t=>{(g[t.sucursal]=g[t.sucursal]||[]).push(t);});return g;}
 function sucEntregada(s){return grupos()[s]?.every(t=>t.estado==='recepcionado');}
 
+/* ===== Rastreo en segundo plano (Hito 2) ===== */
+let BG=null, bgWatcherId=null, gpsBuf=[], gpsTimer=null;
+function initBG(){ try{ if(window.Capacitor&&window.Capacitor.registerPlugin) BG=window.Capacitor.registerPlugin('BackgroundGeolocation'); }catch(_){ BG=null; } }
+async function iniciarTracking(){
+  if(!BG||!ruta||bgWatcherId) return;
+  try{
+    bgWatcherId=await BG.addWatcher({
+      backgroundMessage:'Registrando tu ruta de traslados. Toca para abrir la app.',
+      backgroundTitle:'Fitalia Traslados — ruta activa',
+      requestPermissions:true, stale:false, distanceFilter:30
+    }, (location,error)=>{
+      if(error) return;
+      if(location&&location.latitude!=null&&ruta) bufPunto(location.latitude,location.longitude);
+    });
+  }catch(e){ /* silencioso */ }
+}
+async function detenerTracking(){
+  if(BG&&bgWatcherId){ try{ await BG.removeWatcher({id:bgWatcherId}); }catch(_){} }
+  bgWatcherId=null; await flushGps();
+}
+function bufPunto(lat,lon){
+  if(!ruta) return;
+  gpsBuf.push({ruta_id:ruta.id, lat:+(+lat).toFixed(6), lon:+(+lon).toFixed(6)});
+  if(gpsBuf.length>=5) flushGps();
+  else { clearTimeout(gpsTimer); gpsTimer=setTimeout(flushGps,20000); }
+}
+async function flushGps(){
+  if(!gpsBuf.length) return;
+  const batch=gpsBuf.splice(0);
+  try{ await sb.from('gps_track').insert(batch); }catch(e){ for(const b of batch.reverse()) gpsBuf.unshift(b); }
+}
+
 /* ===== SESIÓN ===== */
 async function init(){
+  initBG();
   const {data:{session}}=await sb.auth.getSession();
   if(session){ usuario=session.user; await cargarPerfil(); await cargarRutaAbierta(); ruta?go('tareas'):go('home'); }
   else renderLogin();
@@ -125,7 +158,7 @@ async function cargarPerfil(){
 }
 async function cargarRutaAbierta(){
   const {data}=await sb.from('rutas').select('*').eq('chofer_id',usuario.id).eq('estado','en_curso').order('creado_en',{ascending:false}).limit(1);
-  ruta=(data&&data[0])||null; if(ruta) await cargarTraslados();
+  ruta=(data&&data[0])||null; if(ruta){ await cargarTraslados(); iniciarTracking(); }
 }
 async function cargarTraslados(){
   const {data}=await sb.from('traslados').select('*').eq('ruta_id',ruta.id).order('creado_en');
@@ -248,6 +281,7 @@ async function iniciarRuta(){
     try{ const fref=await subirFoto(fotoRefFile,'referencia'); await sb.from('rutas').update({foto_referencia_url:fref}).eq('id',ruta.id); }
     catch(fe){ console.warn('foto referencia no guardada:', fe.message); }
     sel=new Set(); fotoRefFile=null; await cargarTraslados();
+    iniciarTracking();
     toast('Ruta iniciada'+(g.lat?' · GPS ok':'')); go('tareas');
   }catch(e){
     // Si la ruta se creó pero no alcanzó a cargar GTI, ciérrala para no dejarla huérfana.
@@ -280,6 +314,7 @@ function scTareas(){
 }
 async function cancelarRuta(){
   if(!confirm('¿Cancelar esta ruta? Se cerrará sin completar las entregas pendientes.')) return;
+  await detenerTracking();
   try{ await sb.from('rutas').update({estado:'cerrada',cierre_ts:new Date().toISOString()}).eq('id',ruta.id); }catch(_){}
   ruta=null; tras=[]; toast('Ruta cancelada'); go('home');
 }
@@ -332,6 +367,7 @@ async function confirmarEntrega(sEnc){
 
 /* ===== CIERRE ===== */
 async function cerrarRuta(){
+  await detenerTracking();
   if(ruta.estado!=='cerrada'){ try{ await sb.from('rutas').update({estado:'cerrada',cierre_ts:new Date().toISOString()}).eq('id',ruta.id); }catch(_){} }
   scCierre();
 }
