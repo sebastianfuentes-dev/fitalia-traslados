@@ -53,6 +53,7 @@
   .spin{display:inline-block;width:16px;height:16px;border:2.5px solid #fff;border-top-color:transparent;border-radius:50%;animation:s .7s linear infinite;vertical-align:-3px;margin-right:6px}
   @keyframes s{to{transform:rotate(360deg)}}
   .center{min-height:70vh;display:flex;flex-direction:column;justify-content:center}
+  .prog{font-size:12px;color:var(--muted);margin:-4px 0 12px;font-weight:600}
   .hidden{display:none}
 </style>
 </head>
@@ -74,7 +75,7 @@ const SUPABASE_KEY='sb_publishable_kADwAb6Re6zqcYg7Qq9EAA_Vp8UVrYz';
 const SUC_COLOR={'Brasil':'#005BB9','Gran Avenida':'#0E9F6E','Diez de Julio':'#F59E0B','CD Conchalí':'#8B5CF6'};
 const sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 const $=(s)=>document.querySelector(s), app=()=>$('#app');
-let usuario=null, perfil=null, ruta=null, tras=[], sel=new Set(), disp=[];
+let usuario=null, perfil=null, ruta=null, tras=[], sel=new Set(), disp=[], fotosCarga={};
 
 function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600);}
 function esc(s){return (s??'').toString().replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));}
@@ -111,6 +112,12 @@ async function subirFoto(file,prefijo){
 }
 function grupos(){const g={};tras.forEach(t=>{(g[t.sucursal]=g[t.sucursal]||[]).push(t);});return g;}
 function sucEntregada(s){return grupos()[s]?.every(t=>t.estado==='recepcionado');}
+// Registra un evento para la campana y el push del panel de supervisión (best-effort).
+async function registrarEvento(tipo,texto,extra){
+  try{ await sb.from('eventos').insert({tipo,chofer_id:usuario?.id||null,chofer_nombre:perfil?.nombre||null,
+    ruta_id:ruta?.id||null,texto:texto||null,sucursal:extra?.sucursal||null,gti_count:extra?.gti_count||null}); }
+  catch(e){ console.warn('evento no registrado:', e.message); }
+}
 
 /* ===== Rastreo en segundo plano (Hito 2) ===== */
 let BG=null, bgWatcherId=null, gpsBuf=[], gpsTimer=null;
@@ -229,43 +236,69 @@ async function scSelect(){
     <div class="gmeta">${d.bultos?`<span class="pill">${d.bultos} bultos</span>`:''}${d.nvi?`<span>NVI ${esc(d.nvi)}</span>`:''}</div></div></div>`).join('');
   actN();
 }
-function tog(g){ sel.has(g)?sel.delete(g):sel.add(g); scSelect(); renderNav(); }
+function tog(g){ sel.has(g)?sel.delete(g):sel.add(g); fotosCarga={}; scSelect(); renderNav(); }
 function actN(){const n=sel.size;if($('#n'))$('#n').textContent=n;if($('#cont'))$('#cont').disabled=n===0;}
 
-/* ===== RESUMEN + FOTO REFERENCIA (obligatoria) ===== */
-let fotoRefFile=null;
+/* ===== RESUMEN + FOTO DE CARGA POR SUCURSAL (obligatoria) ===== */
 function scResumen(){
   const elegidas=disp.filter(d=>sel.has(d.gti));
   const g={}; elegidas.forEach(d=>{(g[d.sucursal]=g[d.sucursal]||[]).push(d);});
   const sucs=Object.keys(g);
   const agregar=!!ruta; // ya hay ruta en curso -> se SUMAN a ella
+  // sólo se piden fotos de las sucursales cuyas GTI son NUEVas (no están ya en la ruta)
+  const nuevasPorSuc={}; sucs.forEach(s=>{ nuevasPorSuc[s]=g[s].filter(d=>!tras.some(t=>t.gti===d.gti)); });
+  const sucsFoto=sucs.filter(s=>nuevasPorSuc[s].length>0);
+  const hechas=sucsFoto.filter(s=>fotosCarga[s]).length;
+  const listo=sucsFoto.length>0 && hechas===sucsFoto.length;
   app().innerHTML=`<h2>${agregar?'Agregar GTI a la ruta':'Tu ruta de hoy'}</h2>
     <p class="sub">${agregar?`Se sumarán ${elegidas.length} GTI a tu ruta en curso.`:`Visitarás <b>${sucs.length} sucursal(es)</b> con ${elegidas.length} GTI.`}</p>
-    ${sucs.map(s=>`<div class="suchead"><span class="sucdot" style="background:${SUC_COLOR[s]||'#64748B'}"></span><span class="sucname">${esc(s)}</span><span class="tag pend">${g[s].length} GTI</span></div>
-      ${g[s].map(d=>`<div class="card"><div class="gnum">GTI ${esc(d.gti)}</div><div class="gmeta">${d.bultos?`<span class="pill">${d.bultos} bultos</span>`:''}</div></div>`).join('')}`).join('')}
-    ${agregar?'':`<h2 style="margin-top:16px;font-size:15px">Foto de referencia de la carga <span style="color:var(--bad)">*</span></h2>
-    <p class="sub" style="margin-bottom:8px">Obligatoria. Una foto del total de la mercadería que subes (solo referencia).</p>
-    <label class="foto ${fotoRefFile?'ok':''}" id="fref" for="fileref">${fotoRefFile?'✓ Foto de referencia lista':'📷 Tomar foto de referencia'}</label>
-    <input id="fileref" type="file" accept="image/*" capture="environment" class="hidden"/>`}
-    <button class="btn ok" id="iniciar" onclick="${agregar?'agregarGtis()':'iniciarRuta()'}">${agregar?'➕ Agregar a la ruta':'📍 Registrar salida e iniciar ruta'}</button>
+    <div class="banner info">Toma una foto de la carga de <b>cada sucursal</b> antes de salir.</div>
+    <div class="prog">Fotos de carga: ${hechas}/${sucsFoto.length}</div>
+    ${sucs.map((s,i)=>`<div class="card">
+      <div class="suchead" style="margin:0 0 8px"><span class="sucdot" style="background:${SUC_COLOR[s]||'#64748B'}"></span><span class="sucname">${esc(s)}</span><span class="tag ${fotosCarga[s]?'ok':'pend'}">${fotosCarga[s]?'FOTO LISTA':g[s].length+' GTI'}</span></div>
+      <div class="gmeta" style="margin-bottom:${nuevasPorSuc[s].length?'10px':'0'}">${g[s].map(d=>`<span class="pill">GTI ${esc(d.gti)}${d.bultos?' · '+d.bultos+' b.':''}</span>`).join('')}</div>
+      ${nuevasPorSuc[s].length?`<label class="foto ${fotosCarga[s]?'ok':''}" id="fc${i}" for="filec${i}" style="margin:0">${fotosCarga[s]?'✓ Foto de carga tomada':'📷 Tomar foto de carga de '+esc(s)}</label>
+      <input id="filec${i}" type="file" accept="image/*" capture="environment" class="hidden"/>`:'<div class="banner info" style="margin:0">Ya en la ruta</div>'}
+    </div>`).join('')}
+    <button class="btn ok" id="iniciar" ${listo?'':'disabled'} onclick="${agregar?'agregarGtis()':'iniciarRuta()'}">${agregar?'🚚 Agregar e iniciar carga':'🚚 Iniciar viaje'}</button>
     <button class="btn ghost" onclick="go('select')">Volver a la selección</button>`;
-  const fr=$('#fileref');
-  if(fr) fr.onchange=(e)=>{fotoRefFile=e.target.files[0]||null;if(fotoRefFile){const u=URL.createObjectURL(fotoRefFile);const f=$('#fref');f.classList.add('ok');f.innerHTML='✓ Foto lista<br><img src="'+u+'">';}};
+  sucs.forEach((s,i)=>{
+    const inp=$('#filec'+i);
+    if(inp) inp.onchange=(e)=>{ const f=e.target.files[0]||null; if(f){ fotosCarga[s]=f; scResumen(); } };
+  });
+}
+// sube la foto de carga de cada sucursal y la asigna a las GTI (nuevas) de esa sucursal
+async function subirFotosCarga(sucs){
+  for(const s of sucs){
+    if(!fotosCarga[s]) continue;
+    try{
+      const path=await subirFoto(fotosCarga[s],'carga_'+s.replace(/\s+/g,'_'));
+      await sb.from('traslados').update({foto_carga_url:path}).eq('ruta_id',ruta.id).eq('sucursal',s).is('foto_carga_url',null);
+    }catch(fe){ console.warn('foto carga '+s+' no guardada:', fe.message); }
+  }
 }
 async function agregarGtis(){
+  const nuevas=disp.filter(d=>sel.has(d.gti)).filter(d=>!tras.some(t=>t.gti===d.gti));
+  const sucs=[...new Set(nuevas.map(d=>d.sucursal))];
+  const faltan=sucs.filter(s=>!fotosCarga[s]);
+  if(faltan.length){ toast('Falta foto de carga de: '+faltan.join(', ')); return; }
   const b=$('#iniciar'); b.disabled=true; b.innerHTML='<span class="spin"></span>Agregando…';
   try{
-    const elegidas=disp.filter(d=>sel.has(d.gti)).filter(d=>!tras.some(t=>t.gti===d.gti));
-    if(!elegidas.length){ toast('Esas GTI ya están en tu ruta'); go('tareas'); return; }
-    const filas=elegidas.map(d=>({ruta_id:ruta.id,gti:d.gti,sucursal:d.sucursal,nvi:d.nvi||null,bultos:d.bultos||null,estado:'en_ruta'}));
+    if(!nuevas.length){ toast('Esas GTI ya están en tu ruta'); go('tareas'); return; }
+    const filas=nuevas.map(d=>({ruta_id:ruta.id,gti:d.gti,sucursal:d.sucursal,nvi:d.nvi||null,bultos:d.bultos||null,estado:'en_ruta'}));
     const {error}=await sb.from('traslados').insert(filas); if(error) throw error;
-    for(const d of elegidas){ try{ await sb.from('gti_disponibles').update({tomada:true}).eq('gti',d.gti); }catch(_){} }
-    sel=new Set(); await cargarTraslados();
-    toast(elegidas.length+' GTI agregada(s) a la ruta'); go('tareas');
-  }catch(e){ toast('Error: '+e.message); b.disabled=false; b.textContent='➕ Agregar a la ruta'; }
+    for(const d of nuevas){ try{ await sb.from('gti_disponibles').update({tomada:true}).eq('gti',d.gti); }catch(_){} }
+    // foto de carga por sucursal: best-effort, se asigna a cada GTI nueva de esa sucursal
+    await subirFotosCarga(sucs);
+    sel=new Set(); fotosCarga={}; await cargarTraslados();
+    toast(nuevas.length+' GTI agregada(s) a la ruta'); go('tareas');
+  }catch(e){ toast('Error: '+e.message); b.disabled=false; b.textContent='🚚 Agregar e iniciar carga'; }
 }
 async function iniciarRuta(){
-  if(!fotoRefFile){ toast('La foto de referencia es obligatoria'); return; }
+  const elegidas=disp.filter(d=>sel.has(d.gti));
+  const sucs=[...new Set(elegidas.map(d=>d.sucursal))];
+  const faltan=sucs.filter(s=>!fotosCarga[s]);
+  if(faltan.length){ toast('Falta foto de carga de: '+faltan.join(', ')); return; }
   const b=$('#iniciar'); b.disabled=true; b.innerHTML='<span class="spin"></span>Iniciando…';
   try{
     const g=await gps();
@@ -273,20 +306,19 @@ async function iniciarRuta(){
       salida_ts:new Date().toISOString(),salida_lat:g.lat,salida_lon:g.lon,estado:'en_curso'}).select().single();
     if(e1) throw e1; ruta=r;
     // 1) Las GTI son lo ESENCIAL: se insertan primero, para no dejar rutas vacías.
-    const elegidas=disp.filter(d=>sel.has(d.gti));
     const filas=elegidas.map(d=>({ruta_id:ruta.id,gti:d.gti,sucursal:d.sucursal,nvi:d.nvi||null,bultos:d.bultos||null,estado:'en_ruta'}));
     const {error:e2}=await sb.from('traslados').insert(filas); if(e2) throw e2;
     for(const d of elegidas){ try{ await sb.from('gti_disponibles').update({tomada:true}).eq('gti',d.gti); }catch(_){} }
-    // 2) Foto de referencia: best-effort, NO debe tumbar la ruta si algo falla.
-    try{ const fref=await subirFoto(fotoRefFile,'referencia'); await sb.from('rutas').update({foto_referencia_url:fref}).eq('id',ruta.id); }
-    catch(fe){ console.warn('foto referencia no guardada:', fe.message); }
-    sel=new Set(); fotoRefFile=null; await cargarTraslados();
+    // 2) Foto de carga por sucursal: best-effort, NO debe tumbar la ruta si algo falla.
+    await subirFotosCarga(sucs);
+    sel=new Set(); fotosCarga={}; await cargarTraslados();
     iniciarTracking();
+    registrarEvento('inicio','inició ruta · '+elegidas.length+' GTI ('+sucs.join(', ')+')',{gti_count:elegidas.length});
     toast('Ruta iniciada'+(g.lat?' · GPS ok':'')); go('tareas');
   }catch(e){
     // Si la ruta se creó pero no alcanzó a cargar GTI, ciérrala para no dejarla huérfana.
     try{ if(ruta&&(!tras||!tras.length)){ await sb.from('rutas').update({estado:'cerrada',cierre_ts:new Date().toISOString()}).eq('id',ruta.id); ruta=null; } }catch(_){}
-    toast('Error: '+e.message); b.disabled=false; b.textContent='📍 Registrar salida e iniciar ruta';
+    toast('Error: '+e.message); b.disabled=false; b.textContent='🚚 Iniciar viaje';
   }
 }
 
@@ -315,6 +347,7 @@ function scTareas(){
 async function cancelarRuta(){
   if(!confirm('¿Cancelar esta ruta? Se cerrará sin completar las entregas pendientes.')) return;
   await detenerTracking();
+  await registrarEvento('termino','canceló su ruta',{gti_count:tras.length});
   try{ await sb.from('rutas').update({estado:'cerrada',cierre_ts:new Date().toISOString()}).eq('id',ruta.id); }catch(_){}
   ruta=null; tras=[]; toast('Ruta cancelada'); go('home');
 }
@@ -361,6 +394,7 @@ async function confirmarEntrega(sEnc){
       if(error) throw error;
     }
     await cargarTraslados();
+    registrarEvento('entrega','entregó en '+s+' · '+cajas.length+' GTI',{sucursal:s,gti_count:cajas.length});
     toast('Entrega en '+s+' registrada'); go('tareas');
   }catch(e){ toast('Error: '+e.message); b.disabled=false; b.textContent='Confirmar entrega'; }
 }
@@ -369,6 +403,8 @@ async function confirmarEntrega(sEnc){
 async function cerrarRuta(){
   await detenerTracking();
   if(ruta.estado!=='cerrada'){ try{ await sb.from('rutas').update({estado:'cerrada',cierre_ts:new Date().toISOString()}).eq('id',ruta.id); }catch(_){} }
+  const nsuc=Object.keys(grupos()).length;
+  registrarEvento('termino','completó su ruta · '+tras.length+' GTI en '+nsuc+' sucursal(es)',{gti_count:tras.length});
   scCierre();
 }
 function scCierre(){
@@ -378,7 +414,7 @@ function scCierre(){
     <h2>Resumen de la tarea</h2><p class="sub">${tras.length} GTI entregadas en ${sucs.length} sucursal(es).</p>
     ${sucs.map(s=>`<div class="card"><div class="suchead" style="margin:0 0 6px"><span class="sucdot" style="background:${SUC_COLOR[s]||'#64748B'}"></span><span class="sucname">${esc(s)}</span><span class="tag ok">✓ ${hora(g[s][0].llegada_ts)}</span></div>
       <div class="gmeta">${g[s].map(t=>`<span class="pill">GTI ${esc(t.gti)}${t.estado_merc&&t.estado_merc!=='Completa y conforme'?' ⚠':''}</span>`).join('')}<span>📷 entrega</span></div></div>`).join('')}
-    <div class="card" style="background:var(--brand-l);border-color:#BBD5F0"><div class="gmeta"><span>📷 Foto de referencia grupal</span><span>·</span><span>Salida ${hora(ruta.salida_ts)}</span></div></div>
+    <div class="card" style="background:var(--brand-l);border-color:#BBD5F0"><div class="gmeta"><span>📷 Foto de carga por sucursal</span><span>·</span><span>Salida ${hora(ruta.salida_ts)}</span></div></div>
     <button class="btn brand" onclick="nuevaRuta()">🏠 Volver al menú principal</button>`;
 }
 function nuevaRuta(){ ruta=null; tras=[]; go('home'); }
