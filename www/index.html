@@ -105,9 +105,26 @@ async function gps(){
     setTimeout(finish, 7000);
   });
 }
+// Comprime la foto antes de subirla: máx 1280 px de lado y JPEG calidad ~60%.
+// Baja una foto de celular de ~3 MB a ~150-250 KB (menos storage y menos egress en Supabase).
+async function comprimirImagen(file, maxLado=1280, calidad=0.6){
+  try{
+    if(!file || !(file.type||'').startsWith('image/')) return file;
+    const dataUrl=await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(file); });
+    const img=await new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=dataUrl; });
+    let w=img.naturalWidth||img.width, h=img.naturalHeight||img.height;
+    if(Math.max(w,h)>maxLado){ const s=maxLado/Math.max(w,h); w=Math.round(w*s); h=Math.round(h*s); }
+    const c=document.createElement('canvas'); c.width=w; c.height=h;
+    c.getContext('2d').drawImage(img,0,0,w,h);
+    const blob=await new Promise(res=>c.toBlob(res,'image/jpeg',calidad));
+    if(!blob) return file;
+    return new File([blob],(file.name||'foto').replace(/\.\w+$/,'')+'.jpg',{type:'image/jpeg'});
+  }catch(_){ return file; } // ante cualquier error, sube la original
+}
 async function subirFoto(file,prefijo){
+  const f=await comprimirImagen(file);
   const path=(ruta?.id||'tmp')+'/'+prefijo+'_'+Date.now()+'.jpg';
-  const {error}=await sb.storage.from('fotos-traslados').upload(path,file,{contentType:file.type||'image/jpeg',upsert:true});
+  const {error}=await sb.storage.from('fotos-traslados').upload(path,f,{contentType:'image/jpeg',upsert:true});
   if(error) throw error; return path;
 }
 function grupos(){const g={};tras.forEach(t=>{(g[t.sucursal]=g[t.sucursal]||[]).push(t);});return g;}
@@ -222,23 +239,39 @@ function nuevaTarea(){ go('select'); }
 async function salir(){ await sb.auth.signOut(); location.reload(); }
 
 /* ===== SELECCIÓN MÚLTIPLE ===== */
+let _gtiTimer=null;
 async function scSelect(){
   app().innerHTML=`<h2>¿Qué GTI te llevas?</h2><p class="sub">Marca todas las que cargarás. Pueden ser de varias sucursales.</p>
-    <div style="position:sticky;top:0;z-index:6;background:var(--bg);padding:6px 0 10px">
-      <button class="btn brand" id="cont" disabled onclick="go('resumen')" style="margin:0">Continuar con <span id="n">0</span> GTI →</button>
+    <div style="position:sticky;top:0;z-index:6;background:var(--bg);padding:6px 0 8px">
+      <button class="btn brand" id="cont" disabled onclick="go('resumen')" style="margin:0 0 8px">Continuar con <span id="n">0</span> GTI →</button>
+      <input id="buscarGti" type="search" autocapitalize="none" autocomplete="off" placeholder="🔎 Buscar N° de GTI, NVI o sucursal…" style="margin:0"/>
     </div>
     <div id="lista"><div class="card" style="text-align:center;color:var(--muted)"><span class="spin" style="border-color:#94A3B8;border-top-color:transparent"></span> Cargando GTI disponibles…</div></div>`;
+  await recargarGti(true);
+  const inp=$('#buscarGti'); if(inp) inp.oninput=pintarLista;
+  // Auto-refresco de GTI cada 2 minutos mientras esté en esta pantalla.
+  clearInterval(_gtiTimer);
+  _gtiTimer=setInterval(()=>{ if(vista!=='select'){ clearInterval(_gtiTimer); _gtiTimer=null; return; } recargarGti(false); }, 120000);
+}
+async function recargarGti(primera){
+  const l=$('#lista');
   const {data,error}=await sb.from('gti_disponibles').select('*').eq('tomada',false).order('fecha_creacion_gti',{ascending:false}).limit(150);
-  const l=$('#lista'); if(!l) return;
-  if(error){l.innerHTML=`<div class="banner err">${esc(error.message)}</div>`;return;}
+  if(error){ if(primera&&l) l.innerHTML=`<div class="banner err">${esc(error.message)}</div>`; return; }
   disp=data||[];
-  if(!disp.length){l.innerHTML=`<div class="card" style="text-align:center;color:var(--muted)">No hay GTI disponibles ahora.</div>`;return;}
-  l.innerHTML=disp.map((d,i)=>`<div class="card chk ${sel.has(d.gti)?'sel':''}" onclick="tog('${d.gti}')">
+  pintarLista();
+}
+function pintarLista(){
+  const l=$('#lista'); if(!l) return;
+  const q=($('#buscarGti')?.value||'').trim().toLowerCase();
+  const arr=q ? disp.filter(d=>((d.gti||'')+' '+(d.sucursal||'')+' '+(d.nvi||'')).toLowerCase().includes(q)) : disp;
+  if(!disp.length){ l.innerHTML=`<div class="card" style="text-align:center;color:var(--muted)">No hay GTI disponibles ahora.</div>`; actN(); return; }
+  if(!arr.length){ l.innerHTML=`<div class="card" style="text-align:center;color:var(--muted)">Sin resultados para “${esc(q)}”.</div>`; actN(); return; }
+  l.innerHTML=arr.map((d)=>`<div class="card chk ${sel.has(d.gti)?'sel':''}" onclick="tog('${d.gti}')">
     <div class="box">✓</div><div style="flex:1"><div class="gnum">GTI ${esc(d.gti)}</div><div class="gsuc">→ ${esc(d.sucursal||'—')}</div>
     <div class="gmeta">${d.bultos?`<span class="pill">${d.bultos} bultos</span>`:''}${d.nvi?`<span>NVI ${esc(d.nvi)}</span>`:''}</div></div></div>`).join('');
   actN();
 }
-function tog(g){ sel.has(g)?sel.delete(g):sel.add(g); fotosCarga={}; scSelect(); renderNav(); }
+function tog(g){ sel.has(g)?sel.delete(g):sel.add(g); fotosCarga={}; pintarLista(); renderNav(); }
 function actN(){const n=sel.size;if($('#n'))$('#n').textContent=n;if($('#cont'))$('#cont').disabled=n===0;}
 
 /* ===== RESUMEN + FOTO DE CARGA POR SUCURSAL (obligatoria) ===== */
