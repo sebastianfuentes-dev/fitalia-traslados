@@ -12,6 +12,8 @@ workflows:
         script: npx cap add android || echo "android ya existe"
       - name: Sincronizar
         script: npx cap sync android
+      - name: Inyectar permisos de ubicacion/segundo plano en el Manifest
+        script: F=android/app/src/main/AndroidManifest.xml; grep -q ACCESS_BACKGROUND_LOCATION $F || sed -i.bak 's|</manifest>|<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/><uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/><uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/><uses-permission android:name="android.permission.POST_NOTIFICATIONS"/><uses-permission android:name="android.permission.FOREGROUND_SERVICE"/><uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/></manifest>|' $F
       - name: Generar icono de la app (F + camion)
         script: |
           npm i -D @capacitor/assets
