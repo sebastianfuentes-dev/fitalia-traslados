@@ -161,14 +161,25 @@ async function registrarEvento(tipo,texto,extra){
 
 /* ===== Rastreo en segundo plano (Hito 2) ===== */
 let BG=null, bgWatcherId=null, gpsBuf=[], gpsTimer=null;
-function initBG(){ try{ if(window.Capacitor&&window.Capacitor.registerPlugin) BG=window.Capacitor.registerPlugin('BackgroundGeolocation'); }catch(_){ BG=null; } }
+// El plugin SI esta en la app, pero en este montaje window.Capacitor.registerPlugin
+// NO existe (el puente nativo expone Capacitor.Plugins como Proxy y no define
+// registerPlugin). Con la version anterior BG quedaba en null, iniciarTracking()
+// salia por su `if(!BG) return` y el rastreo NUNCA arrancaba: gps_track vacio y
+// el mapa dibujando una recta entre origen y destino.
+// Se toma por la misma via que ya funcionaba para la salida GPS.
+// Ver App-Transporte-GPS-Diagnostico.md (14-08-2026).
+function initBG(){ try{
+  const C = window.Capacitor || {};
+  BG = (C.Plugins && C.Plugins.BackgroundGeolocation)
+       || (typeof C.registerPlugin === 'function' ? C.registerPlugin('BackgroundGeolocation') : null);
+}catch(_){ BG=null; } }
 async function iniciarTracking(){
   if(!BG||!ruta||bgWatcherId) return;
   try{
     bgWatcherId=await BG.addWatcher({
       backgroundMessage:'Registrando tu ruta de traslados. Toca para abrir la app.',
       backgroundTitle:'Fitalia Traslados — ruta activa',
-      requestPermissions:true, stale:false, distanceFilter:30
+      requestPermissions:true, stale:false, distanceFilter:10   // 10 m: rastro pegado a las calles
     }, (location,error)=>{
       if(error) return;
       if(location&&location.latitude!=null&&ruta) bufPunto(location.latitude,location.longitude);
@@ -188,7 +199,12 @@ function bufPunto(lat,lon){
 async function flushGps(){
   if(!gpsBuf.length) return;
   const batch=gpsBuf.splice(0);
-  try{ await sb.from('gps_track').insert(batch); }catch(e){ for(const b of batch.reverse()) gpsBuf.unshift(b); }
+  // supabase-js no lanza excepcion si el insert falla: devuelve {error}. Sin
+  // revisarlo, un rechazo de RLS o de validacion se perdia en silencio.
+  try{
+    const {error}=await sb.from('gps_track').insert(batch);
+    if(error){ for(const b of batch.reverse()) gpsBuf.unshift(b); }
+  }catch(e){ for(const b of batch.reverse()) gpsBuf.unshift(b); }
 }
 
 /* ===== SESIÓN ===== */
