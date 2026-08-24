@@ -55,6 +55,27 @@
   .center{min-height:70vh;display:flex;flex-direction:column;justify-content:center}
   .prog{font-size:12px;color:var(--muted);margin:-4px 0 12px;font-weight:600}
   .hidden{display:none}
+  /* ── Tareas listas ── */
+  .rutarow{display:flex;align-items:center;gap:11px;cursor:pointer}
+  .fecha{width:46px;flex:none;text-align:center;background:var(--brand-l);border-radius:11px;padding:6px 0}
+  .fecha .d{font-size:19px;font-weight:800;color:var(--brand-d);line-height:1}
+  .fecha .m{font-size:10px;font-weight:700;color:var(--brand);text-transform:uppercase}
+  .flecha{margin-left:auto;color:var(--muted);font-size:19px}
+  .tag.warn{background:var(--amberbg);color:#b97400}
+  .tag.bad{background:var(--badbg);color:#991B1B}
+  .fotos{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}
+  .fotos img{width:74px;height:74px;object-fit:cover;border-radius:10px;border:1px solid var(--line);cursor:pointer;background:var(--bg)}
+  .fcap{font-size:10.5px;color:var(--muted);font-weight:700;margin-top:9px;text-transform:uppercase;letter-spacing:.4px}
+  .dato{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;padding:4px 0;border-bottom:1px solid var(--line)}
+  .dato:last-child{border-bottom:0}
+  .dato .k{color:var(--muted)}.dato .v{font-weight:700;color:var(--dark);text-align:right}
+  .volver{background:none;border:0;color:var(--brand);font-weight:800;font-size:13px;padding:0 0 10px;cursor:pointer}
+  .vacio{text-align:center;color:var(--muted);font-size:13.5px;padding:40px 10px}
+  .lb{position:fixed;inset:0;background:rgba(15,23,42,.94);display:none;place-items:center;z-index:80;padding:20px}
+  .lb.on{display:grid}
+  .lb img{max-width:92%;max-height:78%;border-radius:12px;display:block;margin:0 auto}
+  .lb .cerrar{position:absolute;top:16px;right:20px;color:#fff;font-size:32px;font-weight:300;cursor:pointer;line-height:1}
+  .lb .pie{color:#CBD5E1;font-size:12.5px;margin-top:14px;text-align:center}
 </style>
 </head>
 <body>
@@ -65,6 +86,8 @@
   </div>
   <div class="wrap" id="app"></div>
   <div class="nav hidden" id="nav"></div>
+  <div class="lb" id="lb" onclick="cerrarFoto()"><span class="cerrar">&times;</span>
+    <div><img id="lbimg" alt=""/><div class="pie" id="lbpie"></div></div></div>
   <div class="toast" id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -208,22 +231,26 @@ async function login(){
 
 /* ===== NAVEGACIÓN ===== */
 let vista='home';
-const TIT={home:'Menú principal',select:'Seleccionar GTI',resumen:'Resumen de ruta',tareas:'Tareas',entrega:'Entrega',cierre:'Ruta completada'};
+const TIT={home:'Menú principal',select:'Seleccionar GTI',resumen:'Resumen de ruta',tareas:'Tareas',entrega:'Entrega',cierre:'Ruta completada',listas:'Tareas listas',listadet:'Detalle'};
 function go(v){ vista=v; render(); }
 function render(){
   $('#topTit').textContent=TIT[v0()]||'Traslados';
-  ({home:scHome,select:scSelect,resumen:scResumen,tareas:scTareas,entrega:scEntrega,cierre:scCierre}[v0()])();
+  ({home:scHome,select:scSelect,resumen:scResumen,tareas:scTareas,entrega:scEntrega,cierre:scCierre,
+    listas:scListas,listadet:scListaDetalle}[v0()])();
   renderNav();
 }
 function v0(){return vista.split(':')[0];}
 function renderNav(){
   const n=$('#nav');
   if(v0()==='home'&&!ruta){ n.classList.remove('hidden');
-    n.innerHTML=`<button class="on"><span class="ni">🏠</span>Home</button><button onclick="go('select')"><span class="ni">🚚</span>Nueva ruta</button>`; return; }
+    n.innerHTML=`<button class="on"><span class="ni">🏠</span>Home</button>
+      <button onclick="go('select')"><span class="ni">🚚</span>Nueva ruta</button>
+      <button onclick="go('listas')"><span class="ni">✅</span>Listas</button>`; return; }
   if(!usuario){ n.classList.add('hidden'); return; }
   n.classList.remove('hidden');
   n.innerHTML=`<button class="${v0()==='home'?'on':''}" onclick="go('home')"><span class="ni">🏠</span>Home</button>
-    <button class="${['tareas','entrega'].includes(v0())?'on':''}" onclick="go('${ruta?'tareas':'home'}')"><span class="ni">📋</span>Tareas</button>`;
+    <button class="${['tareas','entrega'].includes(v0())?'on':''}" onclick="go('${ruta?'tareas':'home'}')"><span class="ni">📋</span>Tareas</button>
+    <button class="${['listas','listadet'].includes(v0())?'on':''}" onclick="go('listas')"><span class="ni">✅</span>Listas</button>`;
 }
 
 /* ===== HOME ===== */
@@ -453,6 +480,155 @@ function scCierre(){
     <button class="btn brand" onclick="nuevaRuta()">🏠 Volver al menú principal</button>`;
 }
 function nuevaRuta(){ ruta=null; tras=[]; go('home'); }
+
+/* ================== TAREAS LISTAS (historial del chofer) ==================
+   Sus jornadas ya cerradas, con el detalle de cada parada y las fotos.
+   Solo lectura: no toca nada, solo muestra lo que quedo registrado.
+   Se carga por paginas de 10 para no bajarle datos de mas al celular, y las
+   fotos (bucket privado) se firman recien al abrir el detalle.               */
+const LST_PAG = 10;
+let LST = { rutas: [], porRuta: {}, pag: 0, fin: false, cargando: false, det: null };
+
+function fechaLarga(ts){
+  if(!ts) return '';
+  try{ return new Date(ts).toLocaleDateString('es-CL',{weekday:'long',day:'numeric',month:'long'}); }
+  catch(_){ return ''; }
+}
+function diaMes(ts){
+  if(!ts) return {d:'—',m:''};
+  const f=new Date(ts);
+  return { d:String(f.getDate()), m:f.toLocaleDateString('es-CL',{month:'short'}).replace('.','') };
+}
+function duracion(a,b){
+  if(!a||!b) return '—';
+  const min=Math.max(0,Math.round((new Date(b)-new Date(a))/60000));
+  return Math.floor(min/60)+' h '+String(min%60).padStart(2,'0')+' min';
+}
+// Verde conforme, ambar con observacion, rojo con faltante.
+function claseEstado(em){
+  const m=String(em||'').toLowerCase();
+  if(!m) return ['ok','Entregada'];
+  if(m.indexOf('faltante')>=0||m.indexOf('falta')>=0) return ['bad','Con faltante'];
+  if(m.indexOf('conforme')>=0&&m.indexOf('no conforme')<0) return ['ok','Conforme'];
+  return ['warn','Con observación'];
+}
+async function urlFirmada(path){
+  if(!path) return null;
+  try{ const {data}=await sb.storage.from('fotos-traslados').createSignedUrl(path,3600); return data?.signedUrl||null; }
+  catch(_){ return null; }
+}
+window.abrirFoto=function(src,pie){
+  if(!src) return;
+  $('#lbimg').src=src; $('#lbpie').textContent=pie||''; $('#lb').classList.add('on');
+};
+window.cerrarFoto=function(){ $('#lb').classList.remove('on'); $('#lbimg').src=''; };
+
+async function cargarListas(mas){
+  if(LST.cargando || (mas && LST.fin)) return;
+  LST.cargando = true;
+  if(!mas){ LST.rutas=[]; LST.porRuta={}; LST.pag=0; LST.fin=false; }
+  const desde = LST.pag * LST_PAG;
+  try{
+    const {data:rs, error} = await sb.from('rutas').select('*')
+      .eq('chofer_id', usuario.id).eq('estado','cerrada')
+      .order('creado_en',{ascending:false}).range(desde, desde+LST_PAG-1);
+    if(error) throw error;
+    const lote = rs||[];
+    if(lote.length < LST_PAG) LST.fin = true;
+    if(lote.length){
+      LST.pag++;
+      LST.rutas = LST.rutas.concat(lote);
+      const ids = lote.map(r=>r.id);
+      const {data:ts} = await sb.from('traslados').select('*').in('ruta_id', ids);
+      (ts||[]).forEach(t=>{ (LST.porRuta[t.ruta_id]=LST.porRuta[t.ruta_id]||[]).push(t); });
+    }
+  }catch(e){ toast('No pude cargar el historial: '+(e.message||'')); LST.fin=true; }
+  LST.cargando = false;
+}
+window.masListas = async function(){
+  const b=$('#btnMas'); if(b){ b.disabled=true; b.textContent='Cargando…'; }
+  await cargarListas(true); scListas();
+};
+
+async function scListas(){
+  $('#topTit').textContent='Tareas listas';
+  if(!LST.rutas.length && !LST.fin){
+    app().innerHTML='<div class="vacio"><span class="spin" style="border-color:var(--brand);border-top-color:transparent"></span> Cargando tus jornadas…</div>';
+    await cargarListas(false);
+  }
+  if(!LST.rutas.length){
+    app().innerHTML='<h2>Tareas listas</h2><p class="sub">Acá vas a ver tus jornadas ya cerradas.</p>'+
+      '<div class="vacio">Todavía no tenés jornadas cerradas.</div>';
+    renderNav(); return;
+  }
+  app().innerHTML =
+    '<h2>Tareas listas</h2><p class="sub">Tus jornadas cerradas. Tocá una para ver el detalle y las fotos.</p>' +
+    LST.rutas.map(r=>{
+      const ts=LST.porRuta[r.id]||[];
+      const sucs=[...new Set(ts.map(t=>t.sucursal).filter(Boolean))];
+      const f=diaMes(r.salida_ts||r.creado_en);
+      return '<div class="card"><div class="rutarow" onclick="go(\'listadet:'+r.id+'\')">'+
+        '<div class="fecha"><div class="d">'+f.d+'</div><div class="m">'+esc(f.m)+'</div></div>'+
+        '<div style="min-width:0"><div class="gnum">'+ts.length+' GTI entregada'+(ts.length===1?'':'s')+'</div>'+
+        '<div class="gsuc">'+esc(sucs.join(' · ')||'—')+'</div>'+
+        '<div class="gmeta">'+hora(r.salida_ts)+' → '+hora(r.cierre_ts)+'</div></div>'+
+        '<div class="flecha">&rsaquo;</div></div></div>';
+    }).join('') +
+    (LST.fin ? '<div class="vacio">No hay más jornadas registradas.</div>'
+             : '<button class="btn ghost" id="btnMas" onclick="masListas()">Cargar más jornadas</button>');
+  renderNav();
+}
+
+async function scListaDetalle(){
+  const id = vista.split(':')[1];
+  const r = LST.rutas.find(x=>x.id===id);
+  if(!r){ go('listas'); return; }
+  $('#topTit').textContent='Detalle';
+  const ts = LST.porRuta[id]||[];
+  const g = {}; ts.forEach(t=>{ (g[t.sucursal||'—']=g[t.sucursal||'—']||[]).push(t); });
+  const sucs = Object.keys(g);
+
+  app().innerHTML =
+    '<button class="volver" onclick="go(\'listas\')">&lsaquo; Volver a las tareas listas</button>'+
+    '<h2>'+esc(fechaLarga(r.salida_ts||r.creado_en))+'</h2>'+
+    '<p class="sub">Ruta cerrada · '+ts.length+' GTI en '+sucs.length+' sucursal(es).</p>'+
+    '<div class="card">'+
+      '<div class="dato"><span class="k">Salida del CD</span><span class="v">'+hora(r.salida_ts)+'</span></div>'+
+      '<div class="dato"><span class="k">Cierre de ruta</span><span class="v">'+hora(r.cierre_ts)+'</span></div>'+
+      '<div class="dato"><span class="k">Duración</span><span class="v">'+duracion(r.salida_ts,r.cierre_ts)+'</span></div>'+
+    '</div>'+
+    sucs.map(s=>{
+      const lista=g[s], p=lista[0];
+      const [cl,tx]=claseEstado(p.estado_merc);
+      const obs=lista.map(t=>t.incidencia).filter(Boolean)[0];
+      return '<div class="suchead"><span class="sucdot" style="background:'+(SUC_COLOR[s]||'#64748B')+'"></span>'+
+        '<span class="sucname">'+esc(s)+'</span><span class="tag '+cl+'">'+tx+'</span></div>'+
+        '<div class="card">'+
+          '<div class="dato"><span class="k">Entregado</span><span class="v">'+hora(p.llegada_ts)+'</span></div>'+
+          '<div class="dato"><span class="k">Recibió</span><span class="v">'+esc(p.recibido_por||'—')+'</span></div>'+
+          (obs?'<div class="dato"><span class="k">Observación</span><span class="v" style="color:#b97400;max-width:62%">'+esc(obs)+'</span></div>':'')+
+          '<div class="fcap">Guías de esta parada</div>'+
+          lista.map(t=>{ const [c2,t2]=claseEstado(t.estado_merc);
+            return '<div class="gtibox"><div class="gnum">GTI '+esc(t.gti)+'</div>'+
+              '<div class="gmeta">'+(t.bultos?'<span class="pill">'+t.bultos+' bulto'+(t.bultos>1?'s':'')+'</span>':'')+
+              '<span class="tag '+c2+'" style="margin-left:0">'+t2+'</span></div></div>'; }).join('')+
+          '<div class="fcap">Fotos</div>'+
+          '<div class="fotos" data-suc="'+esc(s)+'">'+
+            (p.foto_carga_url?'<img data-path="'+esc(p.foto_carga_url)+'" data-pie="Foto de carga · '+esc(s)+'" alt="carga"/>':'')+
+            (p.foto_recepcion_url?'<img data-path="'+esc(p.foto_recepcion_url)+'" data-pie="Foto de entrega · '+esc(s)+' · '+hora(p.llegada_ts)+'" alt="entrega"/>':'')+
+            ((!p.foto_carga_url&&!p.foto_recepcion_url)?'<span class="gmeta">Sin fotos registradas.</span>':'')+
+          '</div>'+
+        '</div>';
+    }).join('');
+  renderNav();
+
+  // El bucket es privado: recien aca se piden las URL firmadas, una por foto.
+  for(const img of app().querySelectorAll('img[data-path]')){
+    const u = await urlFirmada(img.getAttribute('data-path'));
+    if(u){ img.src=u; img.onclick=()=>abrirFoto(u, img.getAttribute('data-pie')); }
+    else { img.remove(); }
+  }
+}
 
 init();
 </script>
