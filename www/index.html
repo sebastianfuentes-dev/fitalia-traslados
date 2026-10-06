@@ -179,7 +179,7 @@ async function iniciarTracking(){
     bgWatcherId=await BG.addWatcher({
       backgroundMessage:'Registrando tu ruta de traslados. Toca para abrir la app.',
       backgroundTitle:'Fitalia Traslados — ruta activa',
-      requestPermissions:true, stale:false, distanceFilter:10   // 10 m: rastro pegado a las calles
+      requestPermissions:true, stale:false, distanceFilter:5   // 5 m: rastro muy pegado a las calles
     }, (location,error)=>{
       if(error) return;
       if(location&&location.latitude!=null&&ruta) bufPunto(location.latitude,location.longitude);
