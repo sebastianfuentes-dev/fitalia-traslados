@@ -41,6 +41,14 @@
   .tag.pend{background:var(--amberbg);color:#b97400}.tag.ok{background:var(--okbg);color:#065F46}
   .foto{border:2px dashed #CBD5E1;background:#fff;border-radius:12px;padding:18px;text-align:center;color:var(--muted);font-weight:600;font-size:13px;cursor:pointer;margin-bottom:12px}
   .foto.ok{border-style:solid;border-color:var(--ok);background:var(--okbg);color:#065F46}
+  .gal{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:10px}
+  .thm{width:80px;height:80px;border-radius:11px;position:relative;overflow:hidden;border:1px solid var(--line);background:#000}
+  .thm img{width:100%;height:100%;object-fit:cover;display:block}
+  .thm .x{position:absolute;top:3px;right:3px;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.6);color:#fff;border:0;font-size:13px;cursor:pointer;display:grid;place-items:center;padding:0}
+  .addf{width:80px;height:80px;border:2px dashed #CBD5E1;border-radius:11px;background:#fff;color:var(--muted);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:11px;font-weight:700;cursor:pointer}
+  .addf .pls{font-size:22px;line-height:1}
+  .toprf{margin-left:8px;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.18);border:0;color:#fff;font-size:17px;cursor:pointer;flex:none}
+  .toprf.girando{animation:s .8s linear infinite}
   .foto img{max-width:100%;border-radius:9px;margin-top:8px;max-height:150px}
   .banner{border-radius:12px;padding:12px;font-size:13px;font-weight:600;margin-bottom:12px}
   .banner.info{background:var(--brand-l);color:var(--brand-d)}.banner.ok{background:var(--okbg);color:#065F46}.banner.err{background:var(--badbg);color:#991B1B}
@@ -83,6 +91,7 @@
     <div class="logo">F</div>
     <div><div class="t1">FITALIA REPUESTOS</div><div class="t2" id="topTit">Traslados</div></div>
     <div class="who" id="who"></div>
+    <button class="toprf hidden" id="btnRefGti" title="Refrescar GTI" onclick="refrescarGti()">🔄</button>
   </div>
   <div class="wrap" id="app"></div>
   <div class="nav hidden" id="nav"></div>
@@ -251,6 +260,7 @@ const TIT={home:'Menú principal',select:'Seleccionar GTI',resumen:'Resumen de r
 function go(v){ vista=v; render(); }
 function render(){
   $('#topTit').textContent=TIT[v0()]||'Traslados';
+  const rf=$('#btnRefGti'); if(rf) rf.classList.toggle('hidden', v0()!=='select');
   ({home:scHome,select:scSelect,resumen:scResumen,tareas:scTareas,entrega:scEntrega,cierre:scCierre,
     listas:scListas,listadet:scListaDetalle}[v0()])();
   renderNav();
@@ -303,6 +313,12 @@ async function recargarGti(primera){
   disp=data||[];
   pintarLista();
 }
+// Botón manual (esquina superior): vuelve a consultar las GTI al instante.
+async function refrescarGti(){
+  const rf=$('#btnRefGti'); if(rf) rf.classList.add('girando');
+  try{ await recargarGti(false); toast('✓ GTI actualizadas'); }
+  finally{ if(rf) rf.classList.remove('girando'); }
+}
 function pintarLista(){
   const l=$('#lista'); if(!l) return;
   const q=($('#buscarGti')?.value||'').trim().toLowerCase();
@@ -318,6 +334,7 @@ function tog(g){ sel.has(g)?sel.delete(g):sel.add(g); fotosCarga={}; pintarLista
 function actN(){const n=sel.size;if($('#n'))$('#n').textContent=n;if($('#cont'))$('#cont').disabled=n===0;}
 
 /* ===== RESUMEN + FOTO DE CARGA POR SUCURSAL (obligatoria) ===== */
+function nFC(s){ return (fotosCarga[s]||[]).length; }
 function scResumen(){
   const elegidas=disp.filter(d=>sel.has(d.gti));
   const g={}; elegidas.forEach(d=>{(g[d.sucursal]=g[d.sucursal]||[]).push(d);});
@@ -326,39 +343,49 @@ function scResumen(){
   // sólo se piden fotos de las sucursales cuyas GTI son NUEVas (no están ya en la ruta)
   const nuevasPorSuc={}; sucs.forEach(s=>{ nuevasPorSuc[s]=g[s].filter(d=>!tras.some(t=>t.gti===d.gti)); });
   const sucsFoto=sucs.filter(s=>nuevasPorSuc[s].length>0);
-  const hechas=sucsFoto.filter(s=>fotosCarga[s]).length;
+  const hechas=sucsFoto.filter(s=>nFC(s)>0).length;
   const listo=sucsFoto.length>0 && hechas===sucsFoto.length;
   app().innerHTML=`<h2>${agregar?'Agregar GTI a la ruta':'Tu ruta de hoy'}</h2>
     <p class="sub">${agregar?`Se sumarán ${elegidas.length} GTI a tu ruta en curso.`:`Visitarás <b>${sucs.length} sucursal(es)</b> con ${elegidas.length} GTI.`}</p>
-    <div class="banner info">Toma una foto de la carga de <b>cada sucursal</b> antes de salir.</div>
-    <div class="prog">Fotos de carga: ${hechas}/${sucsFoto.length}</div>
+    <div class="banner info">Toma al menos <b>una foto de carga por sucursal</b> antes de salir (puedes agregar más).</div>
+    <div class="prog">Sucursales con foto: ${hechas}/${sucsFoto.length}</div>
     ${sucs.map((s,i)=>`<div class="card">
-      <div class="suchead" style="margin:0 0 8px"><span class="sucdot" style="background:${SUC_COLOR[s]||'#64748B'}"></span><span class="sucname">${esc(s)}</span><span class="tag ${fotosCarga[s]?'ok':'pend'}">${fotosCarga[s]?'FOTO LISTA':g[s].length+' GTI'}</span></div>
+      <div class="suchead" style="margin:0 0 8px"><span class="sucdot" style="background:${SUC_COLOR[s]||'#64748B'}"></span><span class="sucname">${esc(s)}</span><span class="tag ${nFC(s)>0?'ok':'pend'}">${nFC(s)>0?nFC(s)+' FOTO'+(nFC(s)>1?'S':''):g[s].length+' GTI'}</span></div>
       <div class="gmeta" style="margin-bottom:${nuevasPorSuc[s].length?'10px':'0'}">${g[s].map(d=>`<span class="pill">GTI ${esc(d.gti)}${d.bultos?' · '+d.bultos+' b.':''}</span>`).join('')}</div>
-      ${nuevasPorSuc[s].length?`<label class="foto ${fotosCarga[s]?'ok':''}" id="fc${i}" for="filec${i}" style="margin:0">${fotosCarga[s]?'✓ Foto de carga tomada':'📷 Tomar foto de carga de '+esc(s)}</label>
+      ${nuevasPorSuc[s].length?`<div class="gal">
+        ${(fotosCarga[s]||[]).map((f,j)=>`<div class="thm"><img src="${f.url}"><button class="x" onclick="quitarCarga('${encodeURIComponent(s)}',${j})">✕</button></div>`).join('')}
+        <label class="addf" for="filec${i}"><span class="pls">＋</span>${nFC(s)>0?'Agregar':'Foto carga'}</label>
+      </div>
       <input id="filec${i}" type="file" accept="image/*" capture="environment" class="hidden"/>`:'<div class="banner info" style="margin:0">Ya en la ruta</div>'}
     </div>`).join('')}
     <button class="btn ok" id="iniciar" ${listo?'':'disabled'} onclick="${agregar?'agregarGtis()':'iniciarRuta()'}">${agregar?'🚚 Agregar e iniciar carga':'🚚 Iniciar viaje'}</button>
     <button class="btn ghost" onclick="go('select')">Volver a la selección</button>`;
   sucs.forEach((s,i)=>{
     const inp=$('#filec'+i);
-    if(inp) inp.onchange=(e)=>{ const f=e.target.files[0]||null; if(f){ fotosCarga[s]=f; scResumen(); } };
+    if(inp) inp.onchange=(e)=>{ const f=e.target.files[0]; if(f){ (fotosCarga[s]=fotosCarga[s]||[]).push({file:f,url:URL.createObjectURL(f)}); scResumen(); } e.target.value=''; };
   });
 }
-// sube la foto de carga de cada sucursal y la asigna a las GTI (nuevas) de esa sucursal
+function quitarCarga(se,j){ const s=decodeURIComponent(se); if(fotosCarga[s]){ fotosCarga[s].splice(j,1); if(!fotosCarga[s].length) delete fotosCarga[s]; } scResumen(); }
+// sube TODAS las fotos de carga de cada sucursal y las asigna a sus GTI (nuevas)
 async function subirFotosCarga(sucs){
   for(const s of sucs){
-    if(!fotosCarga[s]) continue;
-    try{
-      const path=await subirFoto(fotosCarga[s],'carga_'+s.replace(/\s+/g,'_'));
-      await sb.from('traslados').update({foto_carga_url:path}).eq('ruta_id',ruta.id).eq('sucursal',s).is('foto_carga_url',null);
-    }catch(fe){ console.warn('foto carga '+s+' no guardada:', fe.message); }
+    const arr=fotosCarga[s]||[]; if(!arr.length) continue;
+    const paths=[];
+    for(let k=0;k<arr.length;k++){
+      try{ paths.push(await subirFoto(arr[k].file,'carga_'+s.replace(/\s+/g,'_')+'_'+(k+1))); }
+      catch(fe){ console.warn('foto carga '+s+' no subida:', fe.message); }
+    }
+    if(!paths.length) continue;
+    // 1) foto principal (compatibilidad con panel actual)
+    try{ await sb.from('traslados').update({foto_carga_url:paths[0]}).eq('ruta_id',ruta.id).eq('sucursal',s).is('foto_carga_url',null); }catch(_){}
+    // 2) todas las fotos (best-effort: si la columna no existe aún, no rompe nada)
+    try{ await sb.from('traslados').update({fotos_carga:JSON.stringify(paths)}).eq('ruta_id',ruta.id).eq('sucursal',s); }catch(_){}
   }
 }
 async function agregarGtis(){
   const nuevas=disp.filter(d=>sel.has(d.gti)).filter(d=>!tras.some(t=>t.gti===d.gti));
   const sucs=[...new Set(nuevas.map(d=>d.sucursal))];
-  const faltan=sucs.filter(s=>!fotosCarga[s]);
+  const faltan=sucs.filter(s=>!(fotosCarga[s]&&fotosCarga[s].length));
   if(faltan.length){ toast('Falta foto de carga de: '+faltan.join(', ')); return; }
   const b=$('#iniciar'); b.disabled=true; b.innerHTML='<span class="spin"></span>Agregando…';
   try{
@@ -375,7 +402,7 @@ async function agregarGtis(){
 async function iniciarRuta(){
   const elegidas=disp.filter(d=>sel.has(d.gti));
   const sucs=[...new Set(elegidas.map(d=>d.sucursal))];
-  const faltan=sucs.filter(s=>!fotosCarga[s]);
+  const faltan=sucs.filter(s=>!(fotosCarga[s]&&fotosCarga[s].length));
   if(faltan.length){ toast('Falta foto de carga de: '+faltan.join(', ')); return; }
   const b=$('#iniciar'); b.disabled=true; b.innerHTML='<span class="spin"></span>Iniciando…';
   try{
@@ -431,15 +458,15 @@ async function cancelarRuta(){
 }
 
 /* ===== ENTREGA POR SUCURSAL (1 foto + estado por GTI + estado sucursal) ===== */
-let fotoEntFile=null;
+let fotosEnt=[];
 function scEntrega(){
   const s=decodeURIComponent(vista.split(':')[1]||'');
-  const items=grupos()[s]||[]; fotoEntFile=null;
+  const items=grupos()[s]||[]; fotosEnt=[];
   $('#topTit').textContent='Entregar · '+s;
   app().innerHTML=`<h2>Entregar en ${esc(s)}</h2><p class="sub">${items.length} GTI de esta sucursal. Registra la entrega.</p>
     <div class="banner info">Al confirmar se registra tu llegada (hora + GPS) y se cierran estas GTI.</div>
-    <label>Foto de la entrega <span style="color:var(--bad)">*</span></label>
-    <label class="foto" id="fe" for="fileent">📷 Tomar foto de la entrega</label>
+    <label>Fotos de la entrega <span style="color:var(--bad)">*</span> <span style="color:var(--muted);font-weight:600;font-size:12px">(mín. 1, puedes agregar más)</span></label>
+    <div class="gal" id="galEnt"></div>
     <input id="fileent" type="file" accept="image/*" capture="environment" class="hidden"/>
     <label>Recibe conforme (nombre)</label><input id="recibe" placeholder="Nombre de quien recibe"/>
     <label>Estado general de la sucursal</label>
@@ -449,28 +476,39 @@ function scEntrega(){
       <div class="gnum">GTI ${esc(t.gti)} ${t.bultos?`<span class="pill">${t.bultos} bultos</span>`:''}</div>
       <select class="eg" style="margin:8px 0 6px"><option>Completa y conforme</option><option>Con faltantes</option><option>Con daños</option></select>
       <input class="og" placeholder="Observación (opcional)" style="margin:0"/></div>`).join('')}</div>
-    <button class="btn ok" id="confirmar" onclick="confirmarEntrega('${encodeURIComponent(s)}')">Confirmar entrega en ${esc(s)}</button>
+    <button class="btn ok" id="confirmar" disabled onclick="confirmarEntrega('${encodeURIComponent(s)}')">Confirmar entrega en ${esc(s)}</button>
     <button class="btn ghost" onclick="go('tareas')">Volver a tareas</button>`;
-  $('#fileent').onchange=(e)=>{fotoEntFile=e.target.files[0]||null;if(fotoEntFile){const u=URL.createObjectURL(fotoEntFile);$('#fe').classList.add('ok');$('#fe').innerHTML='✓ Foto lista<br><img src="'+u+'">';}};
+  $('#fileent').onchange=(e)=>{ const f=e.target.files[0]; if(f){ fotosEnt.push({file:f,url:URL.createObjectURL(f)}); pintarGalEnt(); } e.target.value=''; };
+  pintarGalEnt();
 }
+function pintarGalEnt(){
+  const g=$('#galEnt'); if(!g) return;
+  g.innerHTML = fotosEnt.map((f,j)=>`<div class="thm"><img src="${f.url}"><button class="x" onclick="quitarEnt(${j})">✕</button></div>`).join('')
+    + `<label class="addf" for="fileent"><span class="pls">＋</span>${fotosEnt.length?'Agregar':'Foto'}</label>`;
+  const b=$('#confirmar'); if(b) b.disabled=fotosEnt.length<1;
+}
+function quitarEnt(j){ fotosEnt.splice(j,1); pintarGalEnt(); }
 async function confirmarEntrega(sEnc){
   const s=decodeURIComponent(sEnc);
-  if(!fotoEntFile){ toast('La foto de la entrega es obligatoria'); return; }
+  if(!fotosEnt.length){ toast('Agrega al menos una foto de la entrega'); return; }
   const b=$('#confirmar'); b.disabled=true; b.innerHTML='<span class="spin"></span>Registrando…';
   try{
     const g=await gps();
-    const fpath=await subirFoto(fotoEntFile,'entrega_'+s.replace(/\s+/g,'_'));
+    const paths=[];
+    for(let k=0;k<fotosEnt.length;k++){ paths.push(await subirFoto(fotosEnt[k].file,'entrega_'+s.replace(/\s+/g,'_')+'_'+(k+1))); }
     const recibe=$('#recibe').value.trim()||null, estadoSuc=$('#estadoSuc').value;
     const ts=new Date().toISOString();
     const cajas=[...document.querySelectorAll('#gtis .gtibox')];
     for(const c of cajas){
       const id=c.dataset.id, em=c.querySelector('.eg').value, ob=c.querySelector('.og').value.trim()||null;
       const {error}=await sb.from('traslados').update({
-        llegada_ts:ts,llegada_lat:g.lat,llegada_lon:g.lon,foto_recepcion_url:fpath,
+        llegada_ts:ts,llegada_lat:g.lat,llegada_lon:g.lon,foto_recepcion_url:paths[0],
         recibido_por:recibe,estado_sucursal:estadoSuc,estado_merc:em,incidencia:ob,
         estado:'recepcionado',actualizado_en:ts}).eq('id',id);
       if(error) throw error;
     }
+    // todas las fotos de la entrega (best-effort: si la columna no existe aún, no rompe la entrega)
+    try{ await sb.from('traslados').update({fotos_recepcion:JSON.stringify(paths)}).eq('ruta_id',ruta.id).eq('sucursal',s); }catch(_){}
     await cargarTraslados();
     registrarEvento('entrega','entregó en '+s+' · '+cajas.length+' GTI',{sucursal:s,gti_count:cajas.length});
     toast('Entrega en '+s+' registrada'); go('tareas');
